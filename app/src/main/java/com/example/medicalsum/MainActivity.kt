@@ -33,6 +33,9 @@ class MainActivity : ComponentActivity() {
         }
         OkHttpClient.Builder()
             .addInterceptor(logging)
+            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
     private lateinit var repository: SummaryRepository
@@ -100,7 +103,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun summarizeText(text: String) {
-        val url = "http://172.25.96.1:8000/summarize"
+        val url = "http://10.0.2.2:8000/summarize"
         val json = JSONObject()
         json.put("text", text)
         val requestBody = json.toString().toRequestBody("application/json".toMediaType())

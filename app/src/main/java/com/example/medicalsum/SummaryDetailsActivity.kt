@@ -1,15 +1,19 @@
 package com.example.medicalsum
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.example.medicalsum.data.AppDatabase
 import com.example.medicalsum.repository.SummaryRepository
@@ -24,6 +28,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class SummaryDetailsActivity : ComponentActivity() {
     private lateinit var tvSummary: TextView
@@ -31,13 +38,25 @@ class SummaryDetailsActivity : ComponentActivity() {
     private lateinit var etTitle: EditText
     private lateinit var btnEditTitle: TextView
     private lateinit var btnBack: ImageButton
+    private lateinit var btnSave: ImageView
     private lateinit var radioGroup: RadioGroup
 
     private var currentTitle: String = "Title"
+    private var currentSummary: String = "No summary"
     private var summaryId: Int = -1
     private var originalText: String = ""
     private lateinit var repository: SummaryRepository
     private val client = OkHttpClient()
+
+    private val saveFileLauncher: ActivityResultLauncher<Intent> = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data?.data?.let { uri ->
+                saveSummaryToFile(uri)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +76,7 @@ class SummaryDetailsActivity : ComponentActivity() {
         etTitle = findViewById(R.id.summary_title_edit)
         btnEditTitle = findViewById(R.id.edit_title_button)
         btnBack = findViewById(R.id.btn_turn_back)
+        btnSave = findViewById(R.id.btn_save_summary)
         radioGroup = findViewById(R.id.radioGroupOptions)
         summaryId = intent.getIntExtra("summary_id", -1)
     }
@@ -64,12 +84,12 @@ class SummaryDetailsActivity : ComponentActivity() {
     private fun loadDataFromIntent() {
         val summaryText = intent.getStringExtra("summary_text") ?: "No summary"
         currentTitle = intent.getStringExtra("summary_title") ?: "Title"
+        currentSummary = summaryText
 
         tvSummary.text = summaryText
         tvTitle.text = currentTitle
         etTitle.setText(currentTitle)
 
-        // Lấy originalText từ DB nếu có ID (từ danh sách)
         if (summaryId != -1) {
             lifecycleScope.launch {
                 val entity = repository.getById(summaryId)
@@ -78,7 +98,6 @@ class SummaryDetailsActivity : ComponentActivity() {
                 }
             }
         }
-        // Nếu từ MainActivity mới tạo (không có ID), originalText sẽ được lưu tạm khi resummarize (xem bên dưới)
     }
 
     private fun setupListeners() {
@@ -95,6 +114,10 @@ class SummaryDetailsActivity : ComponentActivity() {
             }
         }
 
+        btnSave.setOnClickListener {
+            saveSummaryAsTextFile()
+        }
+
         radioGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
                 R.id.rb_extract -> "extract"
@@ -102,20 +125,19 @@ class SummaryDetailsActivity : ComponentActivity() {
                 R.id.rb_tldr -> "tldr"
                 else -> "extract"
             }
-            // Chỉ gọi API nếu đã có văn bản gốc
             if (originalText.isNotEmpty()) {
                 resummarizeText(originalText, mode)
             } else {
-                Toast.makeText(this, "Đang tải dữ liệu gốc...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Loading original text...", Toast.LENGTH_SHORT).show()
             }
         }
 
         findViewById<Button>(R.id.btn_quiz).setOnClickListener {
-            Toast.makeText(this, "Tính năng Quiz đang phát triển!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Quiz feature in development!", Toast.LENGTH_SHORT).show()
         }
 
         findViewById<Button>(R.id.btn_chat_ai).setOnClickListener {
-            Toast.makeText(this, "Tính năng Chat với AI đang phát triển!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Chat with AI feature in development!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -129,7 +151,7 @@ class SummaryDetailsActivity : ComponentActivity() {
     private fun saveNewTitle() {
         val newTitle = etTitle.text.toString().trim()
         if (newTitle.isBlank()) {
-            Toast.makeText(this, "Tiêu đề không được để trống", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Title cannot be empty", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -142,8 +164,38 @@ class SummaryDetailsActivity : ComponentActivity() {
         if (summaryId != -1) {
             lifecycleScope.launch {
                 repository.updateTitle(summaryId, newTitle)
-                Toast.makeText(this@SummaryDetailsActivity, "Đã cập nhật tiêu đề!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@SummaryDetailsActivity, "Title updated!", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun saveSummaryAsTextFile() {
+        val fileName = if (currentTitle.isNotEmpty() && currentTitle != "Title") {
+            "$currentTitle.txt"
+        } else {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            "Summary_$timeStamp.txt"
+        }
+
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, fileName)
+        }
+
+        saveFileLauncher.launch(intent)
+    }
+
+    private fun saveSummaryToFile(uri: Uri) {
+        try {
+            contentResolver.openOutputStream(uri)?.use { outputStream ->
+                outputStream.write(currentSummary.toByteArray())
+                outputStream.flush()
+            }
+            Toast.makeText(this, "Saved successfully!", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Save failed!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -151,7 +203,7 @@ class SummaryDetailsActivity : ComponentActivity() {
         val url = "http://192.168.0.182:8000/summarize"
         val json = JSONObject().apply {
             put("text", text)
-            put("mode", mode)  // Backend cần hỗ trợ param này nhé!
+            put("mode", mode)
         }
 
         val requestBody = json.toString().toRequestBody("application/json".toMediaType())
@@ -163,7 +215,7 @@ class SummaryDetailsActivity : ComponentActivity() {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
-                    Toast.makeText(this@SummaryDetailsActivity, "Lỗi kết nối server", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@SummaryDetailsActivity, "Connection error", Toast.LENGTH_SHORT).show()
                 }
             }
 
@@ -174,7 +226,7 @@ class SummaryDetailsActivity : ComponentActivity() {
                     val newSummary = jsonObj.getString("summary")
                     runOnUiThread {
                         tvSummary.text = newSummary
-                        // Cập nhật DB nếu có ID
+                        currentSummary = newSummary
                         if (summaryId != -1) {
                             lifecycleScope.launch {
                                 repository.updateSummary(summaryId, newSummary)
@@ -183,7 +235,7 @@ class SummaryDetailsActivity : ComponentActivity() {
                     }
                 } else {
                     runOnUiThread {
-                        Toast.makeText(this@SummaryDetailsActivity, "Lỗi từ server", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@SummaryDetailsActivity, "Server error", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -207,6 +259,7 @@ class SummaryDetailsActivity : ComponentActivity() {
                 }
                 R.id.navigation_settings -> {
                     startActivity(Intent(this, SettingsActivity::class.java))
+                    finish()
                     true
                 }
                 else -> false
